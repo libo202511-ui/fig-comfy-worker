@@ -1,39 +1,126 @@
 """把 worker-comfyui handler 里 VHS 的 gifs 输出并进 images，否则数字人 mp4 会被丢掉。"""
+from __future__ import annotations
+
+import re
 from pathlib import Path
 
-NEEDLE = '            if "images" in node_output:'
-INSERT = '''            if "gifs" in node_output:
-                node_output.setdefault("images", [])
-                node_output["images"].extend(node_output["gifs"])
-            if "images" in node_output:'''
-
+# 只认官方 worker 的 handler，避免误改 ComfyUI 自带 handler.py
+WORKER_MARK = "worker-comfyui"
+IMAGES_RE = re.compile(r'^([ \t]*)if\s+"images"\s+in\s+node_output\s*:', re.M)
 CANDIDATES = (
     Path("/handler.py"),
     Path("/comfyui/handler.py"),
     Path("/rp_handler.py"),
     Path("/workspace/handler.py"),
+    Path("/src/handler.py"),
+    Path("/src/rp_handler.py"),
 )
 
 
+def _unique_files(paths: list[Path]) -> list[Path]:
+    """按绝对路径去重，保持原顺序。"""
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in paths:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def find_targets() -> list[Path]:
+    """定位官方 worker-comfyui 的 handler.py。"""
+    found = [path for path in CANDIDATES if path.is_file()]
+    extras: list[Path] = []
+    for path in Path("/").glob("**/handler.py"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if WORKER_MARK in text and 'if "images" in node_output' in text:
+            extras.append(path)
+    return _unique_files(found + extras)
+
+
+LINK_MARK = "_fig_link_volume_models"
+LINK_SNIPPET = '''
+def _fig_link_volume_models():
+    import os
+    import shutil
+    pairs = (
+        ("/runpod-volume/models/liveportrait", "/comfyui/models/liveportrait"),
+        ("/runpod-volume/models/insightface", "/comfyui/models/insightface"),
+    )
+    for src, dest in pairs:
+        try:
+            if os.path.lexists(dest):
+                if os.path.islink(dest) or os.path.isfile(dest):
+                    os.remove(dest)
+                elif os.path.isdir(dest):
+                    shutil.rmtree(dest)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            os.symlink(src, dest)
+            print("fig linked", dest, "->", src)
+        except OSError as exc:
+            print("fig link skip", dest, exc)
+
+_fig_link_volume_models()
+'''
+
+
+def inject_volume_links(text: str) -> str:
+    """Worker 启动时把盘上的 liveportrait / insightface 链到 FaceShaper 写死的路径。"""
+    if LINK_MARK in text:
+        return text
+    return LINK_SNIPPET + "\n" + text
+
+
+def patch_text(text: str) -> str | None:
+    """把 gifs 列表并进 images；对不上官方写法时返回 None。"""
+    if 'if "gifs" in node_output' in text:
+        return text
+    match = IMAGES_RE.search(text)
+    if not match:
+        return None
+    indent = match.group(1)
+    insert = (
+        f'{indent}if "gifs" in node_output:\n'
+        f'{indent}    node_output.setdefault("images", [])\n'
+        f'{indent}    node_output["images"].extend(node_output["gifs"])\n'
+        f"{match.group(0)}"
+    )
+    return text[: match.start()] + insert + text[match.end() :]
+
+
 def main() -> None:
-    targets = [p for p in CANDIDATES if p.is_file()]
-    if not targets:
-        targets = list(Path("/").glob("**/handler.py"))
+    """扫描并改写 handler；找不到也不抛错，避免挡住 GGUF 镜像构建。"""
+    targets = find_targets()
+    print("handler candidates:", [str(path) for path in targets])
     patched = 0
     for path in targets:
-        text = path.read_text(encoding="utf-8")
-        if "gifs" in node_output:" in text:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"skip {path}: {exc}")
+            continue
+        if WORKER_MARK not in text:
+            print(f"skip {path}: not worker-comfyui")
+            continue
+        new_text = inject_volume_links(text)
+        gifs_text = patch_text(new_text)
+        if gifs_text is not None:
+            new_text = gifs_text
+        if new_text == text:
             print(f"already patched {path}")
             patched += 1
             continue
-        if NEEDLE not in text:
-            print(f"skip {path}: pattern not found")
-            continue
-        path.write_text(text.replace(NEEDLE, INSERT, 1), encoding="utf-8")
+        path.write_text(new_text, encoding="utf-8")
         print(f"patched {path}")
         patched += 1
     if patched == 0:
-        raise SystemExit("handler.py not patched")
+        print("WARN: handler.py not patched, continue without gifs merge")
 
 
 if __name__ == "__main__":
