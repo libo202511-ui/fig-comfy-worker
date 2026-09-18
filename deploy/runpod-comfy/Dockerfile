@@ -32,27 +32,4 @@ RUN if [ -f /comfyui/custom_nodes/ComfyUI-Frame-Interpolation/requirements-no-cu
 # GGUF：缺 gguf 包时 nodes.py import 失败，Comfy 只报 Unet Loader (GGUF) not found
 # comfy-node-install 成功也不等于能加载；这里再装依赖，目录没有就补 clone，没有 nodes.py 则构建失败
 RUN set -eux; \
-    NODE_DIR=""; \
-    for d in /comfyui/custom_nodes/ComfyUI-GGUF /comfyui/custom_nodes/comfyui-gguf; do \
-      if [ -d "$d" ]; then NODE_DIR="$d"; break; fi; \
-    done; \
-    if [ -z "$NODE_DIR" ]; then \
-      git clone --depth 1 https://github.com/city96/ComfyUI-GGUF.git /comfyui/custom_nodes/ComfyUI-GGUF; \
-      NODE_DIR=/comfyui/custom_nodes/ComfyUI-GGUF; \
-    fi; \
-    pip install --no-cache-dir -r "$NODE_DIR/requirements.txt"; \
-    test -f "$NODE_DIR/nodes.py"; \
-    ls -la /comfyui/custom_nodes | head -n 50
-
-# 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
-COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
-COPY extra_model_paths.yaml /extra_model_paths.yaml
-
-# FaceShaper 写死 /comfyui/models/liveportrait，不认 extra_model_paths；链到盘上同名目录
-RUN mkdir -p /comfyui/models \
- && ln -sfn /runpod-volume/models/liveportrait /comfyui/models/liveportrait \
- && ln -sfn /runpod-volume/models/insightface /comfyui/models/insightface
-
-# 官方 handler 只回 images，VHS 视频在 gifs 键会被丢掉；对不上也不让构建失败
-COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
-RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
+    NODE_
