@@ -30,6 +30,21 @@ RUN if [ -f /comfyui/custom_nodes/ComfyUI-Frame-Interpolation/requirements-no-cu
  && pip install --no-cache-dir insightface onnxruntime-gpu
 
 # GGUF：缺 gguf 包时 nodes.py import 失败，Comfy 只报 Unet Loader (GGUF) not found
-# comfy-node-install 成功也不等于能加载；这里再装依赖，目录没有就补 clone，没有 nodes.py 则构建失败
-RUN set -eux; \
-    NODE_
+# 底包通常没有 git，再 clone 会 127；节点已由上面 comfy-node-install 装好，这里只补 pip
+RUN python3 -m pip install --no-cache-dir gguf \
+ && (test -f /comfyui/custom_nodes/ComfyUI-GGUF/nodes.py \
+     || test -f /comfyui/custom_nodes/comfyui-gguf/nodes.py)
+
+# 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
+COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
+COPY extra_model_paths.yaml /extra_model_paths.yaml
+
+# FaceShaper 写死 /comfyui/models/liveportrait；底包若已有同名目录，ln 会链进目录里而不是替换
+RUN rm -rf /comfyui/models/liveportrait /comfyui/models/insightface \
+ && mkdir -p /comfyui/models \
+ && ln -sfn /runpod-volume/models/liveportrait /comfyui/models/liveportrait \
+ && ln -sfn /runpod-volume/models/insightface /comfyui/models/insightface
+
+# 官方 handler 只回 images，VHS 视频在 gifs 键会被丢掉；对不上也不让构建失败
+COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
+RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
