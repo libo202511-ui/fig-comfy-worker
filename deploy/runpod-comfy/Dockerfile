@@ -29,11 +29,14 @@ RUN if [ -f /comfyui/custom_nodes/ComfyUI-Frame-Interpolation/requirements-no-cu
     fi \
  && pip install --no-cache-dir insightface onnxruntime-gpu
 
-# GGUF：缺 gguf 包时 nodes.py import 失败，Comfy 只报 Unet Loader (GGUF) not found
-# 底包通常没有 git，再 clone 会 127；节点已由上面 comfy-node-install 装好，这里只补 pip
-RUN python3 -m pip install --no-cache-dir gguf \
+# GGUF / WanVideoWrapper：comfy-node-install 成功也不等于能 import
+# 缺 gguf/accelerate/peft 时整包加载失败，Comfy 只报节点 not found；底包没有 git，不要再 clone
+RUN python3 -m pip install --no-cache-dir \
+      gguf ftfy accelerate einops diffusers peft sentencepiece protobuf pyloudnorm opencv-python scipy \
  && (test -f /comfyui/custom_nodes/ComfyUI-GGUF/nodes.py \
-     || test -f /comfyui/custom_nodes/comfyui-gguf/nodes.py)
+     || test -f /comfyui/custom_nodes/comfyui-gguf/nodes.py) \
+ && (test -f /comfyui/custom_nodes/ComfyUI-WanVideoWrapper/nodes_model_loading.py \
+     || test -f /comfyui/custom_nodes/comfyui-wanvideowrapper/nodes_model_loading.py)
 
 # 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
