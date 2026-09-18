@@ -7,14 +7,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 腾出磁盘（底包约 14GB）
+      - name: 腾出磁盘
         uses: easimon/maximize-build-space@v10
         with:
-          root-reserve-mb: 12288
+          root-reserve-mb: 2048
+          temp-reserve-mb: 100
+          swap-size-mb: 2048
           remove-dotnet: true
           remove-android: true
           remove-haskell: true
           remove-codeql: true
+          remove-docker-images: true
 
       - uses: actions/checkout@v4
 
@@ -32,3 +35,4 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: liyouchang111/fig-comfy-worker:5.10.0
+          provenance: false
