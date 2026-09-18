@@ -2,7 +2,7 @@
 # 基础镜像与控制台 Hub 的 5.10.0 对齐；不要装 ComfyUI-Manager（会乱升级）
 FROM runpod/worker-comfyui:5.10.0-base
 
-# 与 Tkdqqp 手册第 3 步一致（不含 Manager / AdvancedLivePortrait）
+# 与 Tkdqqp 手册第 3 步一致（不含 Manager；ALP 用下面 148 魔改包，不要 git clone 官方）
 RUN comfy-node-install \
     https://github.com/M1kep/ComfyLiterals \
     https://github.com/WASasquatch/was-node-suite-comfyui \
@@ -37,6 +37,15 @@ RUN python3 -m pip install --no-cache-dir \
      || test -f /comfyui/custom_nodes/comfyui-gguf/nodes.py) \
  && (test -f /comfyui/custom_nodes/ComfyUI-WanVideoWrapper/nodes_model_loading.py \
      || test -f /comfyui/custom_nodes/comfyui-wanvideowrapper/nodes_model_loading.py)
+
+# 148 魔改 ALP：官方包没有 ExpressionEditor_batch / _V2，必须用这份 tar，禁止再 clone 官方
+COPY alp-batch.tgz /tmp/alp-batch.tgz
+RUN rm -rf /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait \
+ && tar -xzf /tmp/alp-batch.tgz -C /comfyui/custom_nodes \
+ && rm /tmp/alp-batch.tgz \
+ && python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/requirements.txt \
+ && grep -q 'class ExpressionEditor_batch' /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/nodes.py \
+ && grep -q 'class ExpressionEditor_batch_V2' /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/nodes.py
 
 # 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
