@@ -1,3 +1,5 @@
+# RunPod Serverless 把 Network Volume 挂到 /runpod-volume
+# 模型只放盘上，不打进镜像；补上官方 yaml 缺少的 diffusion_models / text_encoders
 runpod_worker_comfy:
   base_path: /runpod-volume
   checkpoints: models/checkpoints/
@@ -12,3 +14,6 @@ runpod_worker_comfy:
   unet: models/unet/
   diffusion_models: models/diffusion_models/
   text_encoders: models/text_encoders/
+  liveportrait: models/liveportrait/
+  insightface: models/insightface/
+  input: input/
