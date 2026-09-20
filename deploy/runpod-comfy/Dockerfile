@@ -71,9 +71,42 @@ RUN python3 -m pip install --no-cache-dir \
      || test -d /comfyui/custom_nodes/comfyui-custom-scripts)
 
 # 148 魔改 ALP：官方包没有 ExpressionEditor_batch / _V2，必须用这份 tar，禁止再 clone 官方
+# 路径用短变量，避免 GitHub 网页编辑器把长行使断导致 grep 找不到文件
 COPY alp-batch.tgz /tmp/alp-batch.tgz
-RUN rm -rf /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait \
- && tar -xzf /tmp/alp-batch.tgz -C /comfyui/custom_nodes \
+RUN cd /comfyui/custom_nodes \
+ && rm -rf ComfyUI-AdvancedLivePortrait \
+ && tar -xzf /tmp/alp-batch.tgz \
  && rm /tmp/alp-batch.tgz \
- && python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/requirements.txt \
- && grep -q 'class ExpressionEditor_batch' /comfyui/custom_nodes/Co
+ && ALP=ComfyUI-AdvancedLivePortrait \
+ && test -f "$ALP/nodes.py" \
+ && python3 -m pip install --no-cache-dir -r "$ALP/requirements.txt" \
+ && grep -q 'class ExpressionEditor_batch' "$ALP/nodes.py" \
+ && grep -q 'class ExpressionEditor_batch_V2' "$ALP/nodes.py"
+
+# v4/v5/v6 attention_mode=sageattn：官方 1.0.6 在此镜像 GPU 上 import 即炸（int is not iterable）
+# GitHub 构建机没有 nvcc，编不了 SageAttention2；用 SDPA 顶同名接口，工作流不用改。必须放在扫 requirements 之后
+COPY install_sageattn_shim.py /tmp/install_sageattn_shim.py
+RUN python3 -m pip uninstall -y sageattention || true \
+ && python3 /tmp/install_sageattn_shim.py \
+ && python3 -c "from sageattention import sageattn" \
+ && cd /comfyui/custom_nodes \
+ && (grep -q FIG_WAN_FORCE_SDPA ComfyUI-WanVideoWrapper/nodes_model_loading.py \
+     || grep -q FIG_WAN_FORCE_SDPA comfyui-wanvideowrapper/nodes_model_loading.py)
+
+# 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
+COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
+COPY extra_model_paths.yaml /extra_model_paths.yaml
+
+# FaceShaper 写死 /comfyui/models/liveportrait；底包若已有同名目录，ln 会链进目录里而不是替换
+RUN rm -rf /comfyui/models/liveportrait /comfyui/models/insightface \
+ && mkdir -p /comfyui/models \
+ && ln -sfn /runpod-volume/models/liveportrait /comfyui/models/liveportrait \
+ && ln -sfn /runpod-volume/models/insightface /comfyui/models/insightface
+
+# 官方 handler 只回 images，VHS 视频在 gifs 键会被丢掉；对不上也不让构建失败
+COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
+RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
+
+# zzz_ 前缀：Comfy 在 WanVideoWrapper 之后加载，改 NODE_CLASS_MAPPINGS，不依赖 handler 注入
+COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
+RUN test -f /comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py
