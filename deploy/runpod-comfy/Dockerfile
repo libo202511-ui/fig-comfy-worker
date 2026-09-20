@@ -40,8 +40,9 @@ RUN python3 -m pip install --no-cache-dir \
  && (test -f /comfyui/custom_nodes/ComfyUI-WanVideoWrapper/nodes_model_loading.py \
      || test -f /comfyui/custom_nodes/comfyui-wanvideowrapper/nodes_model_loading.py)
 
-# v4/v5/v6 的 attention_mode=sageattn；1.0.6 走 Triton，GitHub 构建机不用 nvcc 编译 V2
-RUN python3 -m pip install --no-cache-dir triton "sageattention==1.0.6" \
+# v4/v5/v6 的 attention_mode=sageattn。不要单独升 triton：#14 升了之后 4090 上 import 报 int is not iterable
+RUN python3 -m pip uninstall -y sageattention || true \
+ && python3 -m pip install --no-cache-dir --no-deps "sageattention==1.0.6" \
  && python3 -c "from sageattention import sageattn"
 
 # 写实 v1/v2/v3：LoadImagesFromDir //Inspire；缺 cachetools/webcolors 或 Impact 时整包 import 失败
