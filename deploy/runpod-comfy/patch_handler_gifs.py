@@ -67,6 +67,7 @@ def _fig_link_volume_models():
             print("fig link skip", dest, exc)
 
 _fig_link_volume_models()
+print("FIG_WAN_PATCH=v3", flush=True)
 '''
 
 
