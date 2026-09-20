@@ -68,66 +68,23 @@ def _fig_link_volume_models():
             print("fig link skip", dest, exc)
 
 def _fig_wrap_wan_loader():
-    """只改 NODE_CLASS_MAPPINGS 里的真类，禁止扫 sys.modules（会撞上 torch.classes）。"""
-    modes = [
-        "sdpa", "flash_attn_2", "flash_attn_3", "sageattn", "sageattn_3",
-        "radial_sage_attention", "sageattn_compiled", "sageattn_ultravico", "comfy",
-    ]
-
-    def coerce_mode(val):
-        if isinstance(val, str):
-            return val
-        try:
-            return modes[int(val)]
-        except Exception:
-            return "sdpa"
-
-    wrapped = 0
-    try:
-        import nodes as comfy_nodes
-        mappings = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", {}) or {}
-        cls = mappings.get("WanVideoModelLoader")
-        if isinstance(cls, type):
-            fn = getattr(cls, "loadmodel", None)
-            if fn is not None and not getattr(fn, "_fig_wan_wrapped", False):
-                def make_wrapper(orig):
-                    def loadmodel(self, *args, **kwargs):
-                        if "attention_mode" in kwargs:
-                            kwargs["attention_mode"] = coerce_mode(kwargs["attention_mode"])
-                        if "quantization" in kwargs and not isinstance(kwargs["quantization"], str):
-                            kwargs["quantization"] = "disabled"
-                        if "model" in kwargs and not isinstance(kwargs["model"], str):
-                            kwargs["model"] = str(kwargs["model"])
-                        args = list(args)
-                        if args and not isinstance(args[0], str):
-                            args[0] = str(args[0])
-                        if len(args) >= 4 and not isinstance(args[3], str):
-                            args[3] = "disabled"
-                        if len(args) >= 6:
-                            args[5] = coerce_mode(args[5])
-                        return orig(self, *args, **kwargs)
-                    loadmodel._fig_wan_wrapped = True
-                    return loadmodel
-                cls.loadmodel = make_wrapper(fn)
-                wrapped += 1
-    except Exception as exc:
-        print("FIG_WAN_WRAP skip", exc, flush=True)
-    print("FIG_WAN_PATCH=v7 wraps", wrapped, flush=True)
+    """handler 里不再改 Wan 节点，避免 getattr 撞上 torch.classes。真正补丁在 zzz_fig_wan_patch。"""
+    print("FIG_WAN_PATCH=v8 handler-noop", flush=True)
 
 _fig_link_volume_models()
-print("FIG_WAN_PATCH=v7", flush=True)
+print("FIG_WAN_PATCH=v8", flush=True)
 '''
 
 
 def inject_volume_links(text: str) -> str:
-    """Worker 启动时挂盘符号链接，并注入 WanVideoModelLoader 运行时包装。"""
+    """Worker 启动时挂盘符号链接；Wan 补丁不在 handler 里做。"""
     if WRAP_MARK in text:
         return text
     return LINK_SNIPPET + "\n" + text
 
 
 def inject_handler_wrap(text: str) -> str:
-    """在 handler(job) 入口调用包装，此时自定义节点已经加载。"""
+    """handler 入口只打日志，不再 getattr Wan 节点。"""
     if re.search(r"^def handler\([^)]*\):\r?\n[ \t]*_fig_wrap_wan_loader\(\)", text, re.M):
         return text
     match = HANDLER_RE.search(text)
