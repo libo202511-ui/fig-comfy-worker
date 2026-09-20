@@ -90,8 +90,8 @@ RUN python3 -m pip uninstall -y sageattention || true \
  && python3 /tmp/install_sageattn_shim.py \
  && python3 -c "from sageattention import sageattn" \
  && cd /comfyui/custom_nodes \
- && (grep -q FIG_WAN_V11 ComfyUI-WanVideoWrapper/nodes_model_loading.py \
-     || grep -q FIG_WAN_V11 comfyui-wanvideowrapper/nodes_model_loading.py)
+&& (grep -q FIG_WAN_V12 ComfyUI-WanVideoWrapper/nodes_model_loading.py \
+    || grep -q FIG_WAN_V12 comfyui-wanvideowrapper/nodes_model_loading.py)
 
 # 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
