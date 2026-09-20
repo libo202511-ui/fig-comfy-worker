@@ -45,16 +45,35 @@ RUN python3 -m pip uninstall -y sageattention || true \
  && python3 -m pip install --no-cache-dir --no-deps "sageattention==1.0.6" \
  && python3 -c "from sageattention import sageattn"
 
-# 写实 v1/v2/v3：LoadImagesFromDir //Inspire；缺 cachetools/webcolors 或 Impact 时整包 import 失败
-RUN python3 -m pip install --no-cache-dir matplotlib cachetools webcolors opencv-python-headless \
+# 写实 v1/v2/v3 + 其余节点包：缺依赖时整包 import 失败，Comfy 只报节点 not found
+# 扫一遍已装节点的 requirements（跳过插帧会拉 cupy 的那份）；不强制升级 torch
+RUN python3 -m pip install --no-cache-dir \
+      matplotlib cachetools webcolors opencv-python-headless imageio-ffmpeg \
+ && for f in /comfyui/custom_nodes/*/requirements.txt; do \
+      case "$f" in \
+        *Frame-Interpolation*) continue ;; \
+      esac; \
+      python3 -m pip install --no-cache-dir --upgrade-strategy only-if-needed -r "$f"; \
+    done \
  && (test -f /comfyui/custom_nodes/ComfyUI-Inspire-Pack/inspire/image_util.py \
      || test -f /comfyui/custom_nodes/comfyui-inspire-pack/inspire/image_util.py) \
- && if [ -f /comfyui/custom_nodes/ComfyUI-Impact-Pack/requirements.txt ]; then \
-      python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-Impact-Pack/requirements.txt; \
-    fi \
- && if [ -f /comfyui/custom_nodes/ComfyUI-Impact-Subpack/requirements.txt ]; then \
-      python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-Impact-Subpack/requirements.txt; \
-    fi
+ && (test -d /comfyui/custom_nodes/ComfyUI-Impact-Pack \
+     || test -d /comfyui/custom_nodes/comfyui-impact-pack) \
+ && (test -d /comfyui/custom_nodes/ComfyUI-VideoHelperSuite \
+     || test -d /comfyui/custom_nodes/comfyui-videohelpersuite) \
+ && (test -d /comfyui/custom_nodes/ComfyUI-Easy-Use \
+     || test -d /comfyui/custom_nodes/comfyui-easy-use) \
+ && (test -d /comfyui/custom_nodes/comfyui-WhiteRabbit \
+     || test -d /comfyui/custom_nodes/ComfyUI-WhiteRabbit) \
+ && (test -d /comfyui/custom_nodes/ComfyUI-RMBG \
+     || test -d /comfyui/custom_nodes/comfyui-rmbg) \
+ && (test -d /comfyui/custom_nodes/ComfyUI-mxToolkit \
+     || test -d /comfyui/custom_nodes/comfyui-mxtoolkit) \
+ && (test -d /comfyui/custom_nodes/ComfyUI-KJNodes \
+     || test -d /comfyui/custom_nodes/comfyui-kjnodes) \
+ && (test -d /comfyui/custom_nodes/rgthree-comfy) \
+ && (test -d /comfyui/custom_nodes/ComfyUI-Custom-Scripts \
+     || test -d /comfyui/custom_nodes/comfyui-custom-scripts)
 
 # 148 魔改 ALP：官方包没有 ExpressionEditor_batch / _V2，必须用这份 tar，禁止再 clone 官方
 COPY alp-batch.tgz /tmp/alp-batch.tgz
