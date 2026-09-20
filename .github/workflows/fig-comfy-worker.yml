@@ -46,6 +46,6 @@ jobs:
           tags: |
             liyouchang111/fig-comfy-worker:5.10.0
             liyouchang111/fig-comfy-worker:5.10.0-gguf
-            liyouchang111/fig-comfy-worker:5.10.0-gguf-v11
+            liyouchang111/fig-comfy-worker:5.10.0-gguf-v12
           provenance: false
           sbom: false
