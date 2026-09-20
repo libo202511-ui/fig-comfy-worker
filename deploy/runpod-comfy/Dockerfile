@@ -83,15 +83,15 @@ RUN cd /comfyui/custom_nodes \
  && grep -q 'class ExpressionEditor_batch' "$ALP/nodes.py" \
  && grep -q 'class ExpressionEditor_batch_V2' "$ALP/nodes.py"
 
-# v4/v5/v6 attention_mode=sageattn：官方 1.0.6 在此镜像 GPU 上 import 即炸（int is not iterable）
-# GitHub 构建机没有 nvcc，编不了 SageAttention2；用 SDPA 顶同名接口，工作流不用改。必须放在扫 requirements 之后
+# v4/v5/v6 attention_mode=sageattn：在 loadmodel 入口强制 sdpa，工作流不用改
+# GitHub 构建机没有 nvcc，编不了 SageAttention2；用 SDPA 顶同名接口
 COPY install_sageattn_shim.py /tmp/install_sageattn_shim.py
 RUN python3 -m pip uninstall -y sageattention || true \
  && python3 /tmp/install_sageattn_shim.py \
  && python3 -c "from sageattention import sageattn" \
  && cd /comfyui/custom_nodes \
- && (grep -q FIG_WAN_FORCE_SDPA ComfyUI-WanVideoWrapper/nodes_model_loading.py \
-     || grep -q FIG_WAN_FORCE_SDPA comfyui-wanvideowrapper/nodes_model_loading.py)
+ && (grep -q FIG_WAN_V11 ComfyUI-WanVideoWrapper/nodes_model_loading.py \
+     || grep -q FIG_WAN_V11 comfyui-wanvideowrapper/nodes_model_loading.py)
 
 # 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
