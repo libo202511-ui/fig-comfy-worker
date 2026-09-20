@@ -68,23 +68,73 @@ def _fig_link_volume_models():
             print("fig link skip", dest, exc)
 
 def _fig_wrap_wan_loader():
-    """handler 里不再改 Wan 节点，避免 getattr 撞上 torch.classes。真正补丁在 zzz_fig_wan_patch。"""
-    print("FIG_WAN_PATCH=v8 handler-noop", flush=True)
+    """任务进来时再钩 execution.get_input_data，不扫 sys.modules、不 getattr torch.classes。"""
+    try:
+        import execution
+        orig = getattr(execution, "get_input_data", None)
+        if orig is None:
+            print("FIG_WAN_PATCH=v9 no get_input_data", flush=True)
+            return
+        if getattr(orig, "_fig_wan_hooked", False):
+            print("FIG_WAN_PATCH=v9 already hooked", flush=True)
+            return
+        modes = [
+            "sdpa", "flash_attn_2", "flash_attn_3", "sageattn", "sageattn_3",
+            "radial_sage_attention", "sageattn_compiled", "sageattn_ultravico", "comfy",
+        ]
+
+        def coerce_mode(val):
+            if isinstance(val, str):
+                return val
+            try:
+                return modes[int(val)]
+            except Exception:
+                return "sdpa"
+
+        def as_str(val, default=""):
+            if isinstance(val, str):
+                return val
+            if val is None:
+                return default
+            return str(val)
+
+        def hooked(inputs, class_def, *args, **kwargs):
+            result = orig(inputs, class_def, *args, **kwargs)
+            try:
+                if getattr(class_def, "__name__", "") == "WanVideoModelLoader":
+                    data = result[0] if isinstance(result, tuple) else result
+                    if isinstance(data, dict):
+                        if "attention_mode" in data:
+                            data["attention_mode"] = [coerce_mode(x) for x in data["attention_mode"]]
+                        if "quantization" in data:
+                            data["quantization"] = [as_str(x, "disabled") for x in data["quantization"]]
+                        if "model" in data:
+                            data["model"] = [as_str(x) for x in data["model"]]
+                        print("FIG_WAN_PATCH=v9 coerced", data.get("attention_mode"), flush=True)
+            except Exception as exc:
+                print("FIG_WAN_PATCH=v9 coerce skip", exc, flush=True)
+            return result
+
+        hooked._fig_wan_hooked = True
+        execution.get_input_data = hooked
+        print("FIG_WAN_PATCH=v9 hooked get_input_data", flush=True)
+    except Exception as exc:
+        print("FIG_WAN_PATCH=v9 hook skip", exc, flush=True)
 
 _fig_link_volume_models()
-print("FIG_WAN_PATCH=v8", flush=True)
+print("FIG_WAN_PATCH=v9", flush=True)
 '''
 
 
 def inject_volume_links(text: str) -> str:
-    """Worker 启动时挂盘符号链接；Wan 补丁不在 handler 里做。"""
+    """Worker 启动时挂盘符号链接，并注入取参钩子。"""
     if WRAP_MARK in text:
         return text
     return LINK_SNIPPET + "\n" + text
 
 
 def inject_handler_wrap(text: str) -> str:
-    """handler 入口只打日志，不再 getattr Wan 节点。"""
+    """在 handler(job) 入口挂钩子，此时 Comfy 已经起来。"""
     if re.search(r"^def handler\([^)]*\):\r?\n[ \t]*_fig_wrap_wan_loader\(\)", text, re.M):
         return text
     match = HANDLER_RE.search(text)
