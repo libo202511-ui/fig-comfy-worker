@@ -27,26 +27,23 @@ def sageattn_varlen(*args, **kwargs):
     raise NotImplementedError("sageattn_varlen")
 '''
 
-# 插在 loadmodel 的 assert 后面：combo 下标(int)先还原成字符串，避免 "sage" in 3
-COERCE_NEEDLE = (
-    'assert not (vram_management_args is not None and block_swap_args is not None), '
-    '"Can\'t use both block_swap_args and vram_management_args at the same time"'
+# 只替换这一句（官方一定有）。前导空格留在原行上，后面各行按 8 空格对齐 loadmodel
+SAGE_NEEDLE = 'if "sage" in attention_mode:'
+SAGE_REPL = (
+    f"# {FIG_MARK}\n"
+    "        if not isinstance(attention_mode, str):\n"
+    "            try:\n"
+    "                attention_mode = attention_modes[int(attention_mode)]\n"
+    "            except Exception:\n"
+    "                attention_mode = \"sdpa\"\n"
+    "        if not isinstance(quantization, str):\n"
+    "            quantization = \"disabled\"\n"
+    "        if not isinstance(model, str):\n"
+    "            model = str(model)\n"
+    "        if isinstance(attention_mode, str) and \"sage\" in attention_mode:"
 )
-COERCE_REPL = COERCE_NEEDLE + """
-    # """ + FIG_MARK + """
-    if not isinstance(attention_mode, str):
-        try:
-            attention_mode = attention_modes[int(attention_mode)]
-        except Exception:
-            attention_mode = "sdpa"
-    if not isinstance(quantization, str):
-        quantization = "disabled"
-    if not isinstance(model, str):
-        model = str(model)
-"""
 
 IN_REPLACEMENTS = (
-    ('if "sage" in attention_mode:', 'if isinstance(attention_mode, str) and "sage" in attention_mode:'),
     ('if "flash" in attention_mode:', 'if isinstance(attention_mode, str) and "flash" in attention_mode:'),
     ('if "fp8" in quantization:', 'if isinstance(quantization, str) and "fp8" in quantization:'),
     ('if "fast" in quantization:', 'if isinstance(quantization, str) and "fast" in quantization:'),
@@ -66,48 +63,60 @@ def write_shim() -> None:
 
 
 def _wrapper_roots() -> list[Path]:
-    """WanVideoWrapper 可能的安装目录。"""
-    return [
-        Path("/comfyui/custom_nodes/ComfyUI-WanVideoWrapper"),
-        Path("/comfyui/custom_nodes/comfyui-wanvideowrapper"),
-    ]
+    """按 nodes_model_loading.py 定位 WanVideoWrapper，不写死大小写。"""
+    base = Path("/comfyui/custom_nodes")
+    found: list[Path] = []
+    if base.is_dir():
+        print("custom_nodes", [p.name for p in sorted(base.iterdir())])
+        for path in base.iterdir():
+            if path.is_dir() and (path / "nodes_model_loading.py").is_file():
+                found.append(path)
+    print("wrapper roots", [str(path) for path in found])
+    return found
 
 
-def _patch_text(text: str) -> str:
-    """对单文件做 coerce + `in` 判断加固。"""
-    if FIG_MARK in text:
-        return text
-    if COERCE_NEEDLE in text:
-        text = text.replace(COERCE_NEEDLE, COERCE_REPL, 1)
+def _patch_other(text: str) -> str:
+    """加固其余 `\"x\" in int` 判断，不动已经打过的 sage 段。"""
     for needle, repl in IN_REPLACEMENTS:
         text = text.replace(needle, repl)
     return text
 
 
 def patch_wan_loader() -> None:
-    """把 WanVideoWrapper 里所有 `"x" in attention_mode/quantization` 改成先判类型。"""
-    patched = 0
-    for root in _wrapper_roots():
-        if not root.is_dir():
-            continue
+    """在 loadmodel 的 sage 判断前插入 int→str，并给文件打上 FIG 标记。"""
+    roots = _wrapper_roots()
+    if not roots:
+        raise SystemExit("WanVideoWrapper nodes_model_loading.py not found")
+    marked = 0
+    for root in roots:
+        loader = root / "nodes_model_loading.py"
+        text = loader.read_text(encoding="utf-8")
+        print("loader", loader, "sage_needle", SAGE_NEEDLE in text, "mark", FIG_MARK in text)
+        if FIG_MARK not in text:
+            if SAGE_NEEDLE not in text:
+                raise SystemExit(f"sage needle missing: {loader}")
+            text = text.replace(SAGE_NEEDLE, SAGE_REPL, 1)
+        text = _patch_other(text)
+        loader.write_text(text, encoding="utf-8")
+        py_compile.compile(str(loader), doraise=True)
+        if FIG_MARK not in loader.read_text(encoding="utf-8"):
+            raise SystemExit(f"FIG mark missing after patch: {loader}")
+        print("patched loader", loader)
+        marked += 1
         for path in root.rglob("*.py"):
+            if path == loader:
+                continue
             try:
-                text = path.read_text(encoding="utf-8")
+                other = path.read_text(encoding="utf-8")
             except OSError:
                 continue
-            new_text = _patch_text(text)
-            if new_text == text:
+            new_other = _patch_other(other)
+            if new_other == other:
                 continue
-            path.write_text(new_text, encoding="utf-8")
+            path.write_text(new_other, encoding="utf-8")
             py_compile.compile(str(path), doraise=True)
             print("patched", path)
-            patched += 1
-        loader = root / "nodes_model_loading.py"
-        if loader.is_file() and FIG_MARK not in loader.read_text(encoding="utf-8"):
-            raise SystemExit(f"FIG mark missing after patch: {loader}")
-        if loader.is_file():
-            patched += 1
-    if patched == 0:
+    if marked == 0:
         raise SystemExit("WanVideoModelLoader not patched")
     print(FIG_MARK, "ok")
 
