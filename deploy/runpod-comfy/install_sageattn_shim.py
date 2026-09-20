@@ -1,8 +1,11 @@
 """卸掉会炸的官方 sageattention，写入 SDPA 同名接口，并修正 attention_mode 为 int 时的崩溃。"""
 from __future__ import annotations
 
+import py_compile
 import sysconfig
 from pathlib import Path
+
+FIG_MARK = "FIG_WAN_PATCH_V3"
 
 SHIM = '''import torch.nn.functional as F
 
@@ -24,15 +27,33 @@ def sageattn_varlen(*args, **kwargs):
     raise NotImplementedError("sageattn_varlen")
 '''
 
-# 官方写法：if "sage" in attention_mode，attention_mode 若是 combo 下标(int)会炸
-WAN_NEEDLE = 'if "sage" in attention_mode:'
-WAN_REPL = (
-    "if not isinstance(attention_mode, str):\n"
-    "            try:\n"
-    "                attention_mode = attention_modes[int(attention_mode)]\n"
-    "            except Exception:\n"
-    "                attention_mode = str(attention_mode)\n"
-    '        if isinstance(attention_mode, str) and "sage" in attention_mode:'
+# 插在 loadmodel 的 assert 后面：combo 下标(int)先还原成字符串，避免 "sage" in 3
+COERCE_NEEDLE = (
+    'assert not (vram_management_args is not None and block_swap_args is not None), '
+    '"Can\'t use both block_swap_args and vram_management_args at the same time"'
+)
+COERCE_REPL = COERCE_NEEDLE + """
+    # """ + FIG_MARK + """
+    if not isinstance(attention_mode, str):
+        try:
+            attention_mode = attention_modes[int(attention_mode)]
+        except Exception:
+            attention_mode = "sdpa"
+    if not isinstance(quantization, str):
+        quantization = "disabled"
+    if not isinstance(model, str):
+        model = str(model)
+"""
+
+IN_REPLACEMENTS = (
+    ('if "sage" in attention_mode:', 'if isinstance(attention_mode, str) and "sage" in attention_mode:'),
+    ('if "flash" in attention_mode:', 'if isinstance(attention_mode, str) and "flash" in attention_mode:'),
+    ('if "fp8" in quantization:', 'if isinstance(quantization, str) and "fp8" in quantization:'),
+    ('if "fast" in quantization:', 'if isinstance(quantization, str) and "fast" in quantization:'),
+    ('if "scaled" in quantization:', 'if isinstance(quantization, str) and "scaled" in quantization:'),
+    ('if "e4" in quantization:', 'if isinstance(quantization, str) and "e4" in quantization:'),
+    ('if "480" in model or "fun" in model.lower()', 'if isinstance(model, str) and ("480" in model or "fun" in model.lower())'),
+    ('elif "720" in model:', 'elif isinstance(model, str) and "720" in model:'),
 )
 
 
@@ -44,30 +65,51 @@ def write_shim() -> None:
     print("sageattn shim written", pkg)
 
 
-def patch_wan_loader() -> None:
-    """把 WanVideoModelLoader 的 sage 判断改成能吃 int / str。"""
-    roots = (
+def _wrapper_roots() -> list[Path]:
+    """WanVideoWrapper 可能的安装目录。"""
+    return [
         Path("/comfyui/custom_nodes/ComfyUI-WanVideoWrapper"),
         Path("/comfyui/custom_nodes/comfyui-wanvideowrapper"),
-    )
+    ]
+
+
+def _patch_text(text: str) -> str:
+    """对单文件做 coerce + `in` 判断加固。"""
+    if FIG_MARK in text:
+        return text
+    if COERCE_NEEDLE in text:
+        text = text.replace(COERCE_NEEDLE, COERCE_REPL, 1)
+    for needle, repl in IN_REPLACEMENTS:
+        text = text.replace(needle, repl)
+    return text
+
+
+def patch_wan_loader() -> None:
+    """把 WanVideoWrapper 里所有 `"x" in attention_mode/quantization` 改成先判类型。"""
     patched = 0
-    for root in roots:
-        path = root / "nodes_model_loading.py"
-        if not path.is_file():
+    for root in _wrapper_roots():
+        if not root.is_dir():
             continue
-        text = path.read_text(encoding="utf-8")
-        if WAN_REPL in text:
-            print("already patched", path)
+        for path in root.rglob("*.py"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            new_text = _patch_text(text)
+            if new_text == text:
+                continue
+            path.write_text(new_text, encoding="utf-8")
+            py_compile.compile(str(path), doraise=True)
+            print("patched", path)
             patched += 1
-            continue
-        if WAN_NEEDLE not in text:
-            print("needle missing", path)
-            continue
-        path.write_text(text.replace(WAN_NEEDLE, WAN_REPL, 1), encoding="utf-8")
-        print("patched", path)
-        patched += 1
+        loader = root / "nodes_model_loading.py"
+        if loader.is_file() and FIG_MARK not in loader.read_text(encoding="utf-8"):
+            raise SystemExit(f"FIG mark missing after patch: {loader}")
+        if loader.is_file():
+            patched += 1
     if patched == 0:
         raise SystemExit("WanVideoModelLoader not patched")
+    print(FIG_MARK, "ok")
 
 
 def main() -> None:
