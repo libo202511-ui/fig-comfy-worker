@@ -101,3 +101,7 @@ RUN rm -rf /comfyui/models/liveportrait /comfyui/models/insightface \
 # 官方 handler 只回 images，VHS 视频在 gifs 键会被丢掉；对不上也不让构建失败
 COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
 RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
+
+# zzz_ 前缀：Comfy 在 WanVideoWrapper 之后加载，改 NODE_CLASS_MAPPINGS，不依赖 handler 注入
+COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
+RUN test -f /comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py
