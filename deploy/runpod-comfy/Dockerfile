@@ -9,6 +9,8 @@ RUN comfy-node-install \
     https://github.com/city96/ComfyUI-GGUF \
     https://github.com/Fannovel16/ComfyUI-Frame-Interpolation \
     https://github.com/ltdrdata/ComfyUI-Inspire-Pack \
+    https://github.com/ltdrdata/ComfyUI-Impact-Pack \
+    https://github.com/ltdrdata/ComfyUI-Impact-Subpack \
     https://github.com/cubiq/ComfyUI_essentials \
     https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite \
     https://github.com/1038lab/ComfyUI-RMBG \
@@ -41,6 +43,17 @@ RUN python3 -m pip install --no-cache-dir \
 # v4/v5/v6 的 attention_mode=sageattn；1.0.6 走 Triton，GitHub 构建机不用 nvcc 编译 V2
 RUN python3 -m pip install --no-cache-dir triton "sageattention==1.0.6" \
  && python3 -c "from sageattention import sageattn"
+
+# 写实 v1/v2/v3：LoadImagesFromDir //Inspire；缺 cachetools/webcolors 或 Impact 时整包 import 失败
+RUN python3 -m pip install --no-cache-dir matplotlib cachetools webcolors opencv-python-headless \
+ && (test -f /comfyui/custom_nodes/ComfyUI-Inspire-Pack/inspire/image_util.py \
+     || test -f /comfyui/custom_nodes/comfyui-inspire-pack/inspire/image_util.py) \
+ && if [ -f /comfyui/custom_nodes/ComfyUI-Impact-Pack/requirements.txt ]; then \
+      python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-Impact-Pack/requirements.txt; \
+    fi \
+ && if [ -f /comfyui/custom_nodes/ComfyUI-Impact-Subpack/requirements.txt ]; then \
+      python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-Impact-Subpack/requirements.txt; \
+    fi
 
 # 148 魔改 ALP：官方包没有 ExpressionEditor_batch / _V2，必须用这份 tar，禁止再 clone 官方
 COPY alp-batch.tgz /tmp/alp-batch.tgz
