@@ -68,8 +68,7 @@ def _fig_link_volume_models():
             print("fig link skip", dest, exc)
 
 def _fig_wrap_wan_loader():
-    """任务进来时再包一层：Comfy 把 combo 传成 int 时先还原成字符串。"""
-    import sys
+    """只改 NODE_CLASS_MAPPINGS 里的真类，禁止扫 sys.modules（会撞上 torch.classes）。"""
     modes = [
         "sdpa", "flash_attn_2", "flash_attn_3", "sageattn", "sageattn_3",
         "radial_sage_attention", "sageattn_compiled", "sageattn_ultravico", "comfy",
@@ -84,40 +83,39 @@ def _fig_wrap_wan_loader():
             return "sdpa"
 
     wrapped = 0
-    for name, mod in list(sys.modules.items()):
-        cls = getattr(mod, "WanVideoModelLoader", None)
-        if cls is None:
-            continue
-        fn = getattr(cls, "loadmodel", None)
-        if fn is None or getattr(fn, "_fig_wan_wrapped", False):
-            continue
-
-        def make_wrapper(orig):
-            def loadmodel(self, *args, **kwargs):
-                if "attention_mode" in kwargs:
-                    kwargs["attention_mode"] = coerce_mode(kwargs["attention_mode"])
-                if "quantization" in kwargs and not isinstance(kwargs["quantization"], str):
-                    kwargs["quantization"] = "disabled"
-                if "model" in kwargs and not isinstance(kwargs["model"], str):
-                    kwargs["model"] = str(kwargs["model"])
-                args = list(args)
-                if args and not isinstance(args[0], str):
-                    args[0] = str(args[0])
-                if len(args) >= 4 and not isinstance(args[3], str):
-                    args[3] = "disabled"
-                if len(args) >= 6:
-                    args[5] = coerce_mode(args[5])
-                return orig(self, *args, **kwargs)
-            loadmodel._fig_wan_wrapped = True
-            return loadmodel
-
-        cls.loadmodel = make_wrapper(fn)
-        wrapped += 1
-        print("FIG_WAN_WRAP", name, flush=True)
-    print("FIG_WAN_PATCH=v5 wraps", wrapped, flush=True)
+    try:
+        import nodes as comfy_nodes
+        mappings = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", {}) or {}
+        cls = mappings.get("WanVideoModelLoader")
+        if isinstance(cls, type):
+            fn = getattr(cls, "loadmodel", None)
+            if fn is not None and not getattr(fn, "_fig_wan_wrapped", False):
+                def make_wrapper(orig):
+                    def loadmodel(self, *args, **kwargs):
+                        if "attention_mode" in kwargs:
+                            kwargs["attention_mode"] = coerce_mode(kwargs["attention_mode"])
+                        if "quantization" in kwargs and not isinstance(kwargs["quantization"], str):
+                            kwargs["quantization"] = "disabled"
+                        if "model" in kwargs and not isinstance(kwargs["model"], str):
+                            kwargs["model"] = str(kwargs["model"])
+                        args = list(args)
+                        if args and not isinstance(args[0], str):
+                            args[0] = str(args[0])
+                        if len(args) >= 4 and not isinstance(args[3], str):
+                            args[3] = "disabled"
+                        if len(args) >= 6:
+                            args[5] = coerce_mode(args[5])
+                        return orig(self, *args, **kwargs)
+                    loadmodel._fig_wan_wrapped = True
+                    return loadmodel
+                cls.loadmodel = make_wrapper(fn)
+                wrapped += 1
+    except Exception as exc:
+        print("FIG_WAN_WRAP skip", exc, flush=True)
+    print("FIG_WAN_PATCH=v7 wraps", wrapped, flush=True)
 
 _fig_link_volume_models()
-print("FIG_WAN_PATCH=v5", flush=True)
+print("FIG_WAN_PATCH=v7", flush=True)
 '''
 
 
