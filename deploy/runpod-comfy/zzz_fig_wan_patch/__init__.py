@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-FIG_MARK = "FIG_WAN_PATCH=v7"
+FIG_MARK = "FIG_WAN_PATCH=v8"
 
 ATTENTION_MODES = (
     "sdpa",
@@ -114,9 +114,12 @@ def _patch_all() -> int:
     mappings = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", None) if comfy_nodes else None
     if isinstance(mappings, dict):
         cls = mappings.get("WanVideoModelLoader")
-        if cls is not None and _patch_class(cls):
-            count += 1
-            print(FIG_MARK, "mapped WanVideoModelLoader", flush=True)
+        try:
+            if cls is not None and _patch_class(cls):
+                count += 1
+                print(FIG_MARK, "mapped WanVideoModelLoader", flush=True)
+        except Exception as exc:
+            print(FIG_MARK, "map skip", exc, flush=True)
     print(FIG_MARK, "patched", count, flush=True)
     return count
 
