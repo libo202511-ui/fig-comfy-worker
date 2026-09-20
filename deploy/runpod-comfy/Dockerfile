@@ -38,6 +38,10 @@ RUN python3 -m pip install --no-cache-dir \
  && (test -f /comfyui/custom_nodes/ComfyUI-WanVideoWrapper/nodes_model_loading.py \
      || test -f /comfyui/custom_nodes/comfyui-wanvideowrapper/nodes_model_loading.py)
 
+# v4/v5/v6 的 attention_mode=sageattn；1.0.6 走 Triton，GitHub 构建机不用 nvcc 编译 V2
+RUN python3 -m pip install --no-cache-dir triton "sageattention==1.0.6" \
+ && python3 -c "from sageattention import sageattn"
+
 # 148 魔改 ALP：官方包没有 ExpressionEditor_batch / _V2，必须用这份 tar，禁止再 clone 官方
 COPY alp-batch.tgz /tmp/alp-batch.tgz
 RUN rm -rf /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait \
