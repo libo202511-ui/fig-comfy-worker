@@ -7,6 +7,7 @@ from pathlib import Path
 # 只认官方 worker 的 handler，避免误改 ComfyUI 自带 handler.py
 WORKER_MARK = "worker-comfyui"
 IMAGES_RE = re.compile(r'^([ \t]*)if\s+"images"\s+in\s+node_output\s*:', re.M)
+HANDLER_RE = re.compile(r"^(def handler\([^)]*\):\r?\n)", re.M)
 CANDIDATES = (
     Path("/handler.py"),
     Path("/comfyui/handler.py"),
@@ -44,7 +45,7 @@ def find_targets() -> list[Path]:
     return _unique_files(found + extras)
 
 
-LINK_MARK = "_fig_link_volume_models"
+WRAP_MARK = "_fig_wrap_wan_loader"
 LINK_SNIPPET = '''
 def _fig_link_volume_models():
     import os
@@ -66,16 +67,76 @@ def _fig_link_volume_models():
         except OSError as exc:
             print("fig link skip", dest, exc)
 
+def _fig_wrap_wan_loader():
+    """任务进来时再包一层：Comfy 把 combo 传成 int 时先还原成字符串。"""
+    import sys
+    modes = [
+        "sdpa", "flash_attn_2", "flash_attn_3", "sageattn", "sageattn_3",
+        "radial_sage_attention", "sageattn_compiled", "sageattn_ultravico", "comfy",
+    ]
+
+    def coerce_mode(val):
+        if isinstance(val, str):
+            return val
+        try:
+            return modes[int(val)]
+        except Exception:
+            return "sdpa"
+
+    wrapped = 0
+    for name, mod in list(sys.modules.items()):
+        cls = getattr(mod, "WanVideoModelLoader", None)
+        if cls is None:
+            continue
+        fn = getattr(cls, "loadmodel", None)
+        if fn is None or getattr(fn, "_fig_wan_wrapped", False):
+            continue
+
+        def make_wrapper(orig):
+            def loadmodel(self, *args, **kwargs):
+                if "attention_mode" in kwargs:
+                    kwargs["attention_mode"] = coerce_mode(kwargs["attention_mode"])
+                if "quantization" in kwargs and not isinstance(kwargs["quantization"], str):
+                    kwargs["quantization"] = "disabled"
+                if "model" in kwargs and not isinstance(kwargs["model"], str):
+                    kwargs["model"] = str(kwargs["model"])
+                args = list(args)
+                if args and not isinstance(args[0], str):
+                    args[0] = str(args[0])
+                if len(args) >= 4 and not isinstance(args[3], str):
+                    args[3] = "disabled"
+                if len(args) >= 6:
+                    args[5] = coerce_mode(args[5])
+                return orig(self, *args, **kwargs)
+            loadmodel._fig_wan_wrapped = True
+            return loadmodel
+
+        cls.loadmodel = make_wrapper(fn)
+        wrapped += 1
+        print("FIG_WAN_WRAP", name, flush=True)
+    print("FIG_WAN_PATCH=v5 wraps", wrapped, flush=True)
+
 _fig_link_volume_models()
-print("FIG_WAN_PATCH=v3", flush=True)
+print("FIG_WAN_PATCH=v5", flush=True)
 '''
 
 
 def inject_volume_links(text: str) -> str:
-    """Worker 启动时把盘上的 liveportrait / insightface 链到 FaceShaper 写死的路径。"""
-    if LINK_MARK in text:
+    """Worker 启动时挂盘符号链接，并注入 WanVideoModelLoader 运行时包装。"""
+    if WRAP_MARK in text:
         return text
     return LINK_SNIPPET + "\n" + text
+
+
+def inject_handler_wrap(text: str) -> str:
+    """在 handler(job) 入口调用包装，此时自定义节点已经加载。"""
+    if re.search(r"^def handler\([^)]*\):\r?\n[ \t]*_fig_wrap_wan_loader\(\)", text, re.M):
+        return text
+    match = HANDLER_RE.search(text)
+    if not match:
+        print("WARN: def handler not found")
+        return text
+    return text[: match.end()] + "    _fig_wrap_wan_loader()\n" + text[match.end() :]
 
 
 def patch_text(text: str) -> str | None:
@@ -110,6 +171,7 @@ def main() -> None:
             print(f"skip {path}: not worker-comfyui")
             continue
         new_text = inject_volume_links(text)
+        new_text = inject_handler_wrap(new_text)
         gifs_text = patch_text(new_text)
         if gifs_text is not None:
             new_text = gifs_text
