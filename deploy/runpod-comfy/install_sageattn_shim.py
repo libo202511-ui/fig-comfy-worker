@@ -1,11 +1,12 @@
-"""卸掉会炸的官方 sageattention，写入 SDPA 同名接口，并强制 loadmodel 使用 sdpa。"""
+"""卸掉会炸的官方 sageattention，写入 SDPA 同名接口，并在 loadmodel 入口强制字符串。"""
 from __future__ import annotations
 
 import py_compile
+import re
 import sysconfig
 from pathlib import Path
 
-FIG_MARK = "FIG_WAN_FORCE_SDPA"
+FIG_MARK = "FIG_WAN_V11"
 
 SHIM = '''import torch.nn.functional as F
 
@@ -27,15 +28,25 @@ def sageattn_varlen(*args, **kwargs):
     raise NotImplementedError("sageattn_varlen")
 '''
 
-IN_REPLACEMENTS = (
-    ('if "sage" in attention_mode:', 'if isinstance(attention_mode, str) and "sage" in attention_mode:'),
-    ('if "flash" in attention_mode:', 'if isinstance(attention_mode, str) and "flash" in attention_mode:'),
-    ('if "fp8" in quantization:', 'if isinstance(quantization, str) and "fp8" in quantization:'),
-    ('if "fast" in quantization:', 'if isinstance(quantization, str) and "fast" in quantization:'),
-    ('if "scaled" in quantization:', 'if isinstance(quantization, str) and "scaled" in quantization:'),
-    ('if "e4" in quantization:', 'if isinstance(quantization, str) and "e4" in quantization:'),
-    ('if "480" in model or "fun" in model.lower()', 'if isinstance(model, str) and ("480" in model or "fun" in model.lower())'),
-    ('elif "720" in model:', 'elif isinstance(model, str) and "720" in model:'),
+HELPER = (
+    "def _fig_in(needle, haystack):\n"
+    f'    """{FIG_MARK}: 避免 \'"x" in 3\'。"""\n'
+    "    return isinstance(haystack, str) and needle in haystack\n"
+    "\n"
+)
+
+COERCE = (
+    f'        attention_mode = "sdpa"  # {FIG_MARK}\n'
+    '        quantization = quantization if isinstance(quantization, str) else "disabled"\n'
+    "        model = model if isinstance(model, str) else str(model)\n"
+    '        base_precision = base_precision if isinstance(base_precision, str) else "fp16"\n'
+    '        load_device = load_device if isinstance(load_device, str) else "offload_device"\n'
+)
+
+IN_PATTERNS = (
+    (re.compile(r'(["\'])([^"\']+)\1\s+in\s+attention_mode\b'), r"_fig_in(\1\2\1, attention_mode)"),
+    (re.compile(r'(["\'])([^"\']+)\1\s+in\s+quantization\b'), r"_fig_in(\1\2\1, quantization)"),
+    (re.compile(r'(["\'])([^"\']+)\1\s+in\s+model\b(?![.\w])'), r"_fig_in(\1\2\1, model)"),
 )
 
 
@@ -47,60 +58,82 @@ def write_shim() -> None:
     print("sageattn shim written", pkg)
 
 
-def _loader_files() -> list[Path]:
-    """找出所有 nodes_model_loading.py。"""
+def _wan_roots() -> list[Path]:
+    """WanVideoWrapper 可能的目录名。"""
     base = Path("/comfyui/custom_nodes")
-    found: list[Path] = []
-    if base.is_dir():
-        print("custom_nodes", [path.name for path in sorted(base.iterdir())])
-        found.extend(base.glob("*/nodes_model_loading.py"))
-    print("loaders", [str(path) for path in found])
-    return found
+    roots: list[Path] = []
+    if not base.is_dir():
+        return roots
+    print("custom_nodes", [path.name for path in sorted(base.iterdir())])
+    for name in ("ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"):
+        root = base / name
+        if root.is_dir():
+            roots.append(root)
+    return roots
 
 
-def inject_force_sdpa(text: str) -> str:
-    """在 sage 判断前插入强制 sdpa，避免 `"sage" in 3`。"""
-    if FIG_MARK in text:
+def _ensure_helper(text: str) -> str:
+    """文件头写入 _fig_in，避免重复。"""
+    if "def _fig_in(" in text:
         return text
-    needles = (
-        'if "sage" in attention_mode:',
-        'if isinstance(attention_mode, str) and "sage" in attention_mode:',
-    )
-    idx = -1
-    for needle in needles:
-        idx = text.find(needle)
-        if idx != -1:
-            break
-    if idx == -1:
-        raise SystemExit("sage check not found")
-    line_start = text.rfind("\n", 0, idx) + 1
-    indent = text[line_start:idx]
-    force = (
-        f"{indent}attention_mode = \"sdpa\"  # {FIG_MARK}\n"
-        f"{indent}quantization = quantization if isinstance(quantization, str) else \"disabled\"\n"
-        f"{indent}model = model if isinstance(model, str) else str(model)\n"
-    )
-    return text[:line_start] + force + text[line_start:]
+    return HELPER + text
+
+
+def _rewrite_in_checks(text: str) -> str:
+    """把 '"x" in attention_mode/quantization/model' 收成 _fig_in。"""
+    for pattern, repl in IN_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
+
+def _inject_loadmodel_coerce(text: str) -> str:
+    """在 WanVideoModelLoader.loadmodel 第一行插入强制 sdpa。"""
+    if FIG_MARK in text and "attention_mode = \"sdpa\"" in text:
+        return text
+    cls_idx = text.find("class WanVideoModelLoader")
+    if cls_idx < 0:
+        raise SystemExit("WanVideoModelLoader not found")
+    load_idx = text.find("def loadmodel(", cls_idx)
+    if load_idx < 0:
+        raise SystemExit("loadmodel not found")
+    sig_end = text.find("):\n", load_idx)
+    if sig_end < 0:
+        sig_end = text.find("):\r\n", load_idx)
+    if sig_end < 0:
+        raise SystemExit("loadmodel signature end not found")
+    insert_at = text.find("\n", sig_end) + 1
+    return text[:insert_at] + COERCE + text[insert_at:]
 
 
 def patch_wan_loader() -> None:
-    """强制 sdpa，并加固其余 `in` 判断。"""
-    loaders = _loader_files()
-    if not loaders:
-        raise SystemExit("nodes_model_loading.py not found")
-    for loader in loaders:
-        text = inject_force_sdpa(loader.read_text(encoding="utf-8"))
-        for needle, repl in IN_REPLACEMENTS:
-            text = text.replace(needle, repl)
-        loader.write_text(text, encoding="utf-8")
-        py_compile.compile(str(loader), doraise=True)
-        snippet = loader.read_text(encoding="utf-8")
-        if FIG_MARK not in snippet:
-            raise SystemExit(f"force mark missing: {loader}")
-        pos = snippet.find(FIG_MARK)
-        print("patched", loader)
-        print(snippet[max(0, pos - 80) : pos + 160])
-    print(FIG_MARK, "ok")
+    """入口强制字符串，并改掉所有危险的 in 判断。"""
+    roots = _wan_roots()
+    if not roots:
+        raise SystemExit("WanVideoWrapper not found")
+    patched_loader = False
+    for root in roots:
+        for path in root.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            original = text
+            if path.name == "nodes_model_loading.py" and "class WanVideoModelLoader" in text:
+                text = _inject_loadmodel_coerce(text)
+                patched_loader = True
+            if "in attention_mode" in text or "in quantization" in text or '" in model' in text:
+                text = _rewrite_in_checks(text)
+                text = _ensure_helper(text)
+            if text == original:
+                continue
+            path.write_text(text, encoding="utf-8")
+            py_compile.compile(str(path), doraise=True)
+            print("patched", path)
+    if not patched_loader:
+        raise SystemExit("nodes_model_loading.py WanVideoModelLoader not patched")
+    for root in roots:
+        loader = root / "nodes_model_loading.py"
+        if loader.is_file() and FIG_MARK in loader.read_text(encoding="utf-8"):
+            print(FIG_MARK, "ok", loader)
+            return
+    raise SystemExit(f"{FIG_MARK} mark missing")
 
 
 def main() -> None:
