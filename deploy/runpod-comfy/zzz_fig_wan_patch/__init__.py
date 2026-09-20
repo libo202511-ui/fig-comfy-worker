@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-FIG_MARK = "FIG_WAN_PATCH=v6"
+FIG_MARK = "FIG_WAN_PATCH=v7"
 
 ATTENTION_MODES = (
     "sdpa",
@@ -74,8 +74,15 @@ def _stringify_combo(spec, key):
             fields[key] = ("STRING", {"default": "sageattn" if key == "attention_mode" else "disabled"})
 
 
+def _is_node_class(cls) -> bool:
+    """排除 torch.classes 代理：对它做 getattr 会抛 RuntimeError。"""
+    return isinstance(cls, type)
+
+
 def _patch_class(cls) -> bool:
     """包装 loadmodel，并把 attention_mode / quantization 改成 STRING。"""
+    if not _is_node_class(cls):
+        return False
     changed = False
     fn = getattr(cls, "loadmodel", None)
     if fn is not None and not getattr(fn, "_fig_wan_wrapped", False):
@@ -97,7 +104,7 @@ def _patch_class(cls) -> bool:
 
 
 def _patch_all() -> int:
-    """从 NODE_CLASS_MAPPINGS 和已加载模块里找到 WanVideoModelLoader 并打补丁。"""
+    """只打 NODE_CLASS_MAPPINGS 里的 WanVideoModelLoader。"""
     count = 0
     try:
         import nodes as comfy_nodes
@@ -110,15 +117,6 @@ def _patch_all() -> int:
         if cls is not None and _patch_class(cls):
             count += 1
             print(FIG_MARK, "mapped WanVideoModelLoader", flush=True)
-    import sys
-
-    for name, mod in list(sys.modules.items()):
-        cls = getattr(mod, "WanVideoModelLoader", None)
-        if cls is None:
-            continue
-        if _patch_class(cls):
-            count += 1
-            print(FIG_MARK, "module", name, flush=True)
     print(FIG_MARK, "patched", count, flush=True)
     return count
 
