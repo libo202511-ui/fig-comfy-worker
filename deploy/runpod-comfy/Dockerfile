@@ -40,11 +40,6 @@ RUN python3 -m pip install --no-cache-dir \
  && (test -f /comfyui/custom_nodes/ComfyUI-WanVideoWrapper/nodes_model_loading.py \
      || test -f /comfyui/custom_nodes/comfyui-wanvideowrapper/nodes_model_loading.py)
 
-# v4/v5/v6 的 attention_mode=sageattn。不要单独升 triton：#14 升了之后 4090 上 import 报 int is not iterable
-RUN python3 -m pip uninstall -y sageattention || true \
- && python3 -m pip install --no-cache-dir --no-deps "sageattention==1.0.6" \
- && python3 -c "from sageattention import sageattn"
-
 # 写实 v1/v2/v3 + 其余节点包：缺依赖时整包 import 失败，Comfy 只报节点 not found
 # 扫一遍已装节点的 requirements（跳过插帧会拉 cupy 的那份）；不强制升级 torch
 RUN python3 -m pip install --no-cache-dir \
@@ -83,6 +78,13 @@ RUN rm -rf /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait \
  && python3 -m pip install --no-cache-dir -r /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/requirements.txt \
  && grep -q 'class ExpressionEditor_batch' /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/nodes.py \
  && grep -q 'class ExpressionEditor_batch_V2' /comfyui/custom_nodes/ComfyUI-AdvancedLivePortrait/nodes.py
+
+# v4/v5/v6 attention_mode=sageattn：官方 1.0.6 在此镜像 GPU 上 import 即炸（int is not iterable）
+# GitHub 构建机没有 nvcc，编不了 SageAttention2；用 SDPA 顶同名接口，工作流不用改。必须放在扫 requirements 之后
+COPY install_sageattn_shim.py /tmp/install_sageattn_shim.py
+RUN python3 -m pip uninstall -y sageattention || true \
+ && python3 /tmp/install_sageattn_shim.py \
+ && python3 -c "from sageattention import sageattn"
 
 # 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
