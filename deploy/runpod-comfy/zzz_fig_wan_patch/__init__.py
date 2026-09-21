@@ -12,12 +12,15 @@ import sys
 import traceback
 from pathlib import Path
 
-FIG_MARK = "FIG_WAN_PATCH=v16"
+FIG_MARK = "FIG_WAN_PATCH=v17"
 
 # 入参快照进 RunPod details，过长会被平台截断
 MAX_DUMP_CHARS = 700
 # 只留最后几层栈，足够定位到出错的 in 判断
 TRACE_FRAMES = 4
+# comfy 的 load_torch_file 在 except 里做 '...' in e.args[0]，errno 是 int 时它自己会崩，
+# 把真实异常盖成 TypeError。原异常还挂在 __context__ 上，往上捞这么多层
+CAUSE_DEPTH = 3
 
 
 def _combo_options(cls) -> dict[str, list[str]]:
@@ -96,6 +99,46 @@ def _dump_arguments(arguments: dict) -> str:
     return text[:MAX_DUMP_CHARS]
 
 
+def _cause_chain(exc: BaseException) -> str:
+    """捞出被 comfy 错误处理盖掉的原始异常。
+
+    @param exc 捕获到的异常
+    @return 形如 FileNotFoundError: [Errno 2] ...，没有则为空串
+    """
+    parts = []
+    cur = exc.__cause__ or exc.__context__
+    while cur is not None and len(parts) < CAUSE_DEPTH:
+        parts.append(f"{type(cur).__name__}: {cur}")
+        cur = cur.__cause__ or cur.__context__
+    return " <- ".join(parts)
+
+
+def _lora_probe(lora) -> str:
+    """报出每个 LoRA 的路径、是否存在、大小，定位盘上文件问题。
+
+    @param lora WanVideoLoraSelect 传进来的列表
+    @return 单行快照，非列表时为空串
+    """
+    if not isinstance(lora, (list, tuple)):
+        return ""
+    parts = []
+    for index, item in enumerate(lora):
+        if not isinstance(item, dict):
+            parts.append(f"lora[{index}]={type(item).__name__}")
+            continue
+        path = item.get("path")
+        info = f"lora[{index}] path={path!r} strength={item.get('strength')!r}"
+        try:
+            target = Path(str(path))
+            info += f" exists={target.is_file()}"
+            if target.is_file():
+                info += f" size={target.stat().st_size}"
+        except OSError as exc:
+            info += f" stat_err={exc}"
+        parts.append(info)
+    return " | ".join(parts)
+
+
 def _format_frames(exc: BaseException) -> str:
     """取异常栈最后几层的 文件:行:函数，定位真正出错的 in 判断。
 
@@ -125,11 +168,15 @@ def _call_coerced(orig, self, args, kwargs, options, str_names):
             continue
         arguments[key] = _coerce_value(key, arguments[key], options, str_names)
     dump = _dump_arguments(arguments)
-    print(FIG_MARK, "call", dump, flush=True)
+    loras = _lora_probe(arguments.get("lora"))
+    print(FIG_MARK, "call", dump, loras, flush=True)
     try:
         return orig(*bound.args, **bound.kwargs)
     except TypeError as exc:
-        raise ValueError(f"FIG_WAN_V16 {exc} | at {_format_frames(exc)} | {dump}") from None
+        raise ValueError(
+            f"FIG_WAN_V17 {exc} | cause {_cause_chain(exc) or 'none'}"
+            f" | {loras or 'no lora'} | at {_format_frames(exc)} | {dump}"
+        ) from None
 
 
 def _make_wrapper(orig_cls):
