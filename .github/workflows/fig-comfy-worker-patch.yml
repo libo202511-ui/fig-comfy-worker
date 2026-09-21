@@ -1,5 +1,5 @@
 # 增量构建 fig Comfy Worker：基于 Docker Hub 已有的完整镜像只叠补丁层，十几分钟出一版
-# 需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
+# Dockerfile 在流程里现生成，只需维护这一个文件；需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
 name: fig-comfy-worker-patch
 
 on:
@@ -11,6 +11,9 @@ on:
       out_tag:
         description: 产出镜像 tag（填到 RunPod Endpoint 的就是它）
         default: 5.10.0-gguf-v16
+      patch_mark:
+        description: 补丁标记（对不上就让构建失败，避免推出旧补丁）
+        default: FIG_WAN_PATCH=v16
 
 jobs:
   build:
@@ -37,6 +40,25 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # 只换 fig 自己的节点补丁层；base 里已把 /start.sh 包过一层，这里只刷新脚本本身
+      - name: 生成增量 Dockerfile
+        run: |
+          cd deploy/runpod-comfy
+          cat > Dockerfile.patch <<'EOF'
+          ARG BASE_TAG
+          FROM liyouchang111/fig-comfy-worker:${BASE_TAG}
+          ARG PATCH_MARK
+          COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
+          COPY fig_boot_patch.py /fig_boot_patch.py
+          RUN ZZZ=/comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py \
+           && rm -rf /comfyui/custom_nodes/zzz_fig_wan_patch/__pycache__ \
+           && test -f "$ZZZ" \
+           && grep -q "$PATCH_MARK" "$ZZZ" \
+           && python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)" "$ZZZ" \
+           && test -f /start.orig.sh
+          EOF
+          cat Dockerfile.patch
+
       # 默认 docker-container 驱动：新层直接推 registry，base 的层仓库里已有会自动跳过
       - uses: docker/setup-buildx-action@v3
 
@@ -50,7 +72,9 @@ jobs:
           context: deploy/runpod-comfy
           file: deploy/runpod-comfy/Dockerfile.patch
           push: true
-          build-args: BASE_TAG=${{ inputs.base_tag }}
+          build-args: |
+            BASE_TAG=${{ inputs.base_tag }}
+            PATCH_MARK=${{ inputs.patch_mark }}
           tags: liyouchang111/fig-comfy-worker:${{ inputs.out_tag }}
           provenance: false
           sbom: false
