@@ -110,3 +110,10 @@ RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
 # zzz_ 前缀：Comfy 在 WanVideoWrapper 之后加载，改 NODE_CLASS_MAPPINGS，不依赖 handler 注入
 COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
 RUN test -f /comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py
+
+COPY fig_boot_patch.py /fig_boot_patch.py
+RUN if [ -f /start.sh ]; then \
+      cp /start.sh /start.orig.sh \
+      && printf '%s\n' '#!/bin/bash' 'python3 /fig_boot_patch.py || true' 'exec /start.orig.sh "$@"' > /start.sh \
+      && chmod +x /start.sh /start.orig.sh; \
+    fi
