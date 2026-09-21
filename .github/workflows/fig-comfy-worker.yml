@@ -14,9 +14,9 @@ jobs:
       - name: 把空闲盘挂到 Docker
         uses: easimon/maximize-build-space@v10
         with:
-          root-reserve-mb: 12288
+          root-reserve-mb: 8192 # 根盘只留 checkout 和 apt 用量，其余全给 Docker
           temp-reserve-mb: 100
-          swap-size-mb: 2048
+          swap-size-mb: 8192 # 导出层阶段内存吃紧，swap 给足避免 runner 被 OOM 掉线
           remove-dotnet: true
           remove-android: true
           remove-haskell: true
@@ -31,10 +31,9 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # 不用独立 BuildKit 容器，避免镜像再拷一份把盘写满
+      # 用默认 docker-container 驱动：构建结果直接流式推到 Docker Hub。
+      # 换回 driver: docker 会先落本地镜像库再推，导出阶段磁盘占两份，runner 会掉线。
       - uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker
 
       - uses: docker/login-action@v3
         with:
@@ -46,9 +45,7 @@ jobs:
           context: deploy/runpod-comfy
           file: deploy/runpod-comfy/Dockerfile
           push: true
-          tags: |
-            liyouchang111/fig-comfy-worker:5.10.0
-            liyouchang111/fig-comfy-worker:5.10.0-gguf
-            liyouchang111/fig-comfy-worker:5.10.0-gguf-v16
+          # 只推固定版本 tag：浮动 tag 容易让 Endpoint 拉到旧镜像，也多占一次推送
+          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v16
           provenance: false
           sbom: false
