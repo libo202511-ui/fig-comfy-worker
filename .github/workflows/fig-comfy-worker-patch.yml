@@ -10,7 +10,7 @@ on:
         default: 5.10.0-gguf-v15
       out_tag:
         description: 产出镜像 tag（填到 RunPod Endpoint 的就是它）
-        default: 5.10.0-gguf-v17
+        default: 5.10.0-gguf-v18
       patch_mark:
         description: 补丁标记（对不上就让构建失败，避免推出旧补丁）
         default: FIG_WAN_PATCH=v17
@@ -60,6 +60,15 @@ jobs:
              echo "FAIL 标记不符，GitHub 上那份补丁不是这个版本"; exit 1; fi; \
            if ! python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)" "$ZZZ"; then \
              echo "FAIL 补丁文件语法错误，多半被网页编辑器折断了"; exit 1; fi
+          # FaceShaper 的 insightface 走 onnx，onnx 按 protobuf 6.31.1 生成；
+          # 各节点 requirements 会把运行时压到 5.29.6，protobuf 要求运行时不低于生成版本
+          RUN pip install --no-cache-dir "protobuf>=6.31.1" \
+           && python3 -c "import google.protobuf as p; print('protobuf', p.__version__)" \
+           && python3 -c "import onnx; print('onnx', onnx.__version__)" \
+           && python3 -c "import onnxruntime as o; print('onnxruntime', o.__version__)" \
+           && python3 -c "import insightface as i; print('insightface', i.__version__)" \
+           && (python3 -c "import mediapipe as m; print('mediapipe', m.__version__)" \
+               || echo "mediapipe 不可用，若有节点依赖它需回看 protobuf 版本")
           # base 里若还没包过启动脚本，这里补上；已包过就不动，避免套成死循环
           RUN if [ ! -f /start.orig.sh ] && [ -f /start.sh ]; then \
              cp /start.sh /start.orig.sh \
