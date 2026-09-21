@@ -10,10 +10,10 @@ on:
         default: 5.10.0-gguf-v15
       out_tag:
         description: 产出镜像 tag（填到 RunPod Endpoint 的就是它）
-        default: 5.10.0-gguf-v16
+        default: 5.10.0-gguf-v17
       patch_mark:
         description: 补丁标记（对不上就让构建失败，避免推出旧补丁）
-        default: FIG_WAN_PATCH=v16
+        default: FIG_WAN_PATCH=v17
 
 jobs:
   build:
@@ -50,12 +50,24 @@ jobs:
           ARG PATCH_MARK
           COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
           COPY fig_boot_patch.py /fig_boot_patch.py
-          RUN ZZZ=/comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py \
-           && rm -rf /comfyui/custom_nodes/zzz_fig_wan_patch/__pycache__ \
-           && test -f "$ZZZ" \
-           && grep -q "$PATCH_MARK" "$ZZZ" \
-           && python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)" "$ZZZ" \
-           && test -f /start.orig.sh
+          # 逐项校验并各自报错，别用 && 串成一句看不出是哪步挂的
+          RUN ZZZ=/comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py; \
+           rm -rf /comfyui/custom_nodes/zzz_fig_wan_patch/__pycache__; \
+           if [ ! -f "$ZZZ" ]; then echo "FAIL 补丁文件没进镜像"; exit 1; fi; \
+           echo "镜像内标记：$(grep -m1 FIG_MARK "$ZZZ")"; \
+           echo "流程要求：$PATCH_MARK"; \
+           if ! grep -q "$PATCH_MARK" "$ZZZ"; then \
+             echo "FAIL 标记不符，GitHub 上那份补丁不是这个版本"; exit 1; fi; \
+           if ! python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)" "$ZZZ"; then \
+             echo "FAIL 补丁文件语法错误，多半被网页编辑器折断了"; exit 1; fi
+          # base 里若还没包过启动脚本，这里补上；已包过就不动，避免套成死循环
+          RUN if [ ! -f /start.orig.sh ] && [ -f /start.sh ]; then \
+             cp /start.sh /start.orig.sh \
+             && printf '%s\n' '#!/bin/bash' 'python3 /fig_boot_patch.py || true' \
+                'exec /start.orig.sh "$@"' > /start.sh \
+             && chmod +x /start.sh /start.orig.sh; \
+           fi; \
+           ls -l /start.sh /start.orig.sh
           EOF
           cat Dockerfile.patch
 
