@@ -1,0 +1,56 @@
+# 增量构建 fig Comfy Worker：基于 Docker Hub 已有的完整镜像只叠补丁层，十几分钟出一版
+# 需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
+name: fig-comfy-worker-patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_tag:
+        description: 基础镜像 tag（Docker Hub 上已有的完整镜像）
+        default: 5.10.0-gguf-v15
+      out_tag:
+        description: 产出镜像 tag（填到 RunPod Endpoint 的就是它）
+        default: 5.10.0-gguf-v16
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 基础镜像 23G，runner 默认盘放不下，必须把空闲盘挂到 Docker 数据目录
+      - name: 把空闲盘挂到 Docker
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 8192 # 根盘只留 checkout 和 apt 用量，其余全给 Docker
+          temp-reserve-mb: 100
+          swap-size-mb: 8192 # 拉取解包阶段内存吃紧，swap 给足避免 runner 掉线
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+          build-mount-path: /var/lib/docker
+
+      - name: 重启 Docker
+        run: |
+          sudo service docker restart
+          df -h
+
+      - uses: actions/checkout@v4
+
+      # 默认 docker-container 驱动：新层直接推 registry，base 的层仓库里已有会自动跳过
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/runpod-comfy
+          file: deploy/runpod-comfy/Dockerfile.patch
+          push: true
+          build-args: BASE_TAG=${{ inputs.base_tag }}
+          tags: liyouchang111/fig-comfy-worker:${{ inputs.out_tag }}
+          provenance: false
+          sbom: false
