@@ -90,8 +90,8 @@ RUN python3 -m pip uninstall -y sageattention || true \
  && python3 /tmp/install_sageattn_shim.py \
  && python3 -c "from sageattention import sageattn" \
  && cd /comfyui/custom_nodes \
-&& (grep -q FIG_WAN_V12 ComfyUI-WanVideoWrapper/nodes_model_loading.py \
-    || grep -q FIG_WAN_V12 comfyui-wanvideowrapper/nodes_model_loading.py)
+ && (grep -q FIG_WAN_V12 ComfyUI-WanVideoWrapper/nodes_model_loading.py \
+     || grep -q FIG_WAN_V12 comfyui-wanvideowrapper/nodes_model_loading.py)
 
 # 覆盖官方路径表，让盘上的 diffusion_models / text_encoders / liveportrait 也能被扫到
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
@@ -109,8 +109,11 @@ RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
 
 # zzz_ 前缀：Comfy 在 WanVideoWrapper 之后加载，改 NODE_CLASS_MAPPINGS，不依赖 handler 注入
 COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
-RUN test -f /comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py
+RUN ZZZ=/comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py \
+ && test -f "$ZZZ" \
+ && grep -q 'FIG_WAN_PATCH=v16' "$ZZZ"
 
+# Comfy 起来之前改磁盘上所有 Wan 加载器（镜像 + 盘）。挂盘后才能改到 volume 上的副本
 COPY fig_boot_patch.py /fig_boot_patch.py
 RUN if [ -f /start.sh ]; then \
       cp /start.sh /start.orig.sh \
