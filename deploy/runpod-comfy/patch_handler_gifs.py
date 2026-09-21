@@ -122,13 +122,13 @@ def inject_volume_links(text: str) -> str:
 
 def inject_handler_wrap(text: str) -> str:
     """在 handler(job) 入口记下节点 22 入参。"""
-    if re.search(r"^def handler\\([^)]*\\):\\r?\\n[ \\t]*_fig_diag_wan\\._last", text, re.M):
+    if re.search(r"^def handler\([^)]*\):\r?\n[ \t]*_fig_diag_wan\._last", text, re.M):
         return text
     match = HANDLER_RE.search(text)
     if not match:
         print("WARN: def handler not found")
         return text
-    inject = "    _fig_diag_wan._last = _fig_diag_wan(job)\\n"
+    inject = "    _fig_diag_wan._last = _fig_diag_wan(job)\n"
     return text[: match.end()] + inject + text[match.end() :]
 
 
@@ -148,9 +148,9 @@ def patch_text(text: str) -> str | None:
         return None
     indent = match.group(1)
     insert = (
-        f'{indent}if "gifs" in node_output:\\n'
-        f'{indent}    node_output.setdefault("images", [])\\n'
-        f'{indent}    node_output["images"].extend(node_output["gifs"])\\n'
+        f'{indent}if "gifs" in node_output:\n'
+        f'{indent}    node_output.setdefault("images", [])\n'
+        f'{indent}    node_output["images"].extend(node_output["gifs"])\n'
         f"{match.group(0)}"
     )
     return text[: match.start()] + insert + text[match.end() :]
