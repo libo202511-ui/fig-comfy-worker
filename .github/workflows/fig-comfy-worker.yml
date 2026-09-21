@@ -9,6 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 默认会把大盘挂到代码目录，Docker/BuildKit 仍写 /var/lib/docker 会再次写满。
+      # 必须把大盘挂到 Docker 数据目录，并重启守护进程。
       - name: 把空闲盘挂到 Docker
         uses: easimon/maximize-build-space@v10
         with:
@@ -29,6 +31,7 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # 不用独立 BuildKit 容器，避免镜像再拷一份把盘写满
       - uses: docker/setup-buildx-action@v3
         with:
           driver: docker
@@ -46,6 +49,6 @@ jobs:
           tags: |
             liyouchang111/fig-comfy-worker:5.10.0
             liyouchang111/fig-comfy-worker:5.10.0-gguf
-            liyouchang111/fig-comfy-worker:5.10.0-gguf-v15
+            liyouchang111/fig-comfy-worker:5.10.0-gguf-v16
           provenance: false
           sbom: false
