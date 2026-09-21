@@ -1,15 +1,17 @@
-"""fig：用包装类覆盖 WanVideoModelLoader，避免 combo 传 int 时 '"x" in 3'。
+"""fig：覆盖 WanVideoModelLoader。从已 import 的 Wan 模块取原类，不读尚未合并的全局映射。
 
 创建人：LYC
-创建时间：2026-09-20
-目录名 zzz_ 保证在 WanVideoWrapper 之后合并 NODE_CLASS_MAPPINGS。
+创建时间：2026-09-21
+目录名 zzz_ 保证 Comfy 合并映射时后写覆盖官方类。
 """
 
 from __future__ import annotations
 
 import inspect
+import sys
+from pathlib import Path
 
-FIG_MARK = "FIG_WAN_PATCH=v12"
+FIG_MARK = "FIG_WAN_PATCH=v13"
 
 
 def _as_str(value, default=""):
@@ -39,7 +41,7 @@ def _call_coerced(orig, self, args, kwargs):
     try:
         return orig(*bound.args, **bound.kwargs)
     except TypeError as exc:
-        raise ValueError(f"FIG_WAN_V12 {exc}") from None
+        raise ValueError(f"FIG_WAN_V13 {exc}") from None
 
 
 def _make_wrapper(orig_cls):
@@ -56,32 +58,49 @@ def _make_wrapper(orig_cls):
     return FigWanVideoModelLoader
 
 
+def _is_loader_class(cls) -> bool:
+    """确认是 Wan 的模型加载节点。"""
+    return isinstance(cls, type) and getattr(cls, "FUNCTION", None) == "loadmodel"
+
+
 def _find_original():
-    """从全局映射取出尚未包装的原类。"""
-    try:
-        import nodes as comfy_nodes
-    except Exception as exc:
-        print(FIG_MARK, "nodes import failed", exc, flush=True)
+    """从已加载的 Wan 模块取原类，不依赖尚未合并的 nodes.NODE_CLASS_MAPPINGS。"""
+    for name, mod in list(sys.modules.items()):
+        if name.startswith("torch"):
+            continue
+        path = getattr(mod, "__file__", None) or ""
+        if "wanvideo" not in path.replace("\\", "/").lower():
+            continue
+        cls = getattr(mod, "WanVideoModelLoader", None)
+        if _is_loader_class(cls):
+            print(FIG_MARK, "found module", name, path, flush=True)
+            return cls
+    base = Path("/comfyui/custom_nodes")
+    if not base.is_dir():
         return None
-    mappings = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", None)
-    if not isinstance(mappings, dict):
-        return None
-    cls = mappings.get("WanVideoModelLoader")
-    if not isinstance(cls, type):
-        print(FIG_MARK, "original missing", flush=True)
-        return None
-    return cls
+    for loader in base.glob("*/nodes_model_loading.py"):
+        if "wan" not in str(loader).lower():
+            continue
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("fig_wan_loader_orig", loader)
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            cls = getattr(mod, "WanVideoModelLoader", None)
+            if _is_loader_class(cls):
+                print(FIG_MARK, "found file", loader, flush=True)
+                return cls
+        except Exception as exc:
+            print(FIG_MARK, "file skip", loader, exc, flush=True)
+    print(FIG_MARK, "original missing", flush=True)
+    return None
 
 
 _original = _find_original()
 if _original is not None:
     _wrapper = _make_wrapper(_original)
-    try:
-        import nodes as comfy_nodes
-        comfy_nodes.NODE_CLASS_MAPPINGS["WanVideoModelLoader"] = _wrapper
-        print(FIG_MARK, "replaced global mapping", flush=True)
-    except Exception as exc:
-        print(FIG_MARK, "global replace skip", exc, flush=True)
     NODE_CLASS_MAPPINGS = {"WanVideoModelLoader": _wrapper}
     print(FIG_MARK, "export wrapper", flush=True)
 else:
