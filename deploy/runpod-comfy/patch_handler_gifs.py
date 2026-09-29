@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 
 WORKER_MARK = "worker-comfyui"
-IMAGES_RE = re.compile(r'^([ \t]*)if\s+"images"\s+in\s+node_output\s*:', re.M)
 HANDLER_RE = re.compile(r"^(def handler\([^)]*\):\r?\n)", re.M)
 DETAILS_RE = re.compile(r'"details"\s*:\s*errors')
 CANDIDATES = (
@@ -139,21 +138,86 @@ def inject_details(text: str) -> str:
     return DETAILS_RE.sub('"details": _fig_with_diag(errors)', text)
 
 
-def patch_text(text: str) -> str | None:
-    """把 gifs 列表并进 images；对不上官方写法时返回 None。"""
-    if 'if "gifs" in node_output' in text:
+# 每个 VHS 节点的成片在 gifs，不在 images。必须按节点逐个读，不能只靠 images 循环。
+COLLECT_FN = '''
+def _fig_collect_gifs(node_id, node_output, output_data, errors):
+    """把该节点 gifs 里的每一个视频放进返回列表。已有同名文件则跳过。"""
+    if not isinstance(node_output, dict):
+        return
+    gifs = node_output.get("gifs")
+    if not isinstance(gifs, list) or not gifs:
+        return
+    names = []
+    for image_info in gifs:
+        if not isinstance(image_info, dict):
+            continue
+        filename = image_info.get("filename") or image_info.get("name")
+        names.append(filename)
+    print("worker-comfyui - FIG_MEDIA node %s gifs=%s names=%s" % (node_id, len(gifs), names), flush=True)
+    seen = {item.get("filename") for item in output_data if isinstance(item, dict)}
+    for image_info in gifs:
+        if not isinstance(image_info, dict):
+            continue
+        filename = image_info.get("filename") or image_info.get("name")
+        if not filename or filename in seen:
+            continue
+        fullpath = image_info.get("fullpath")
+        image_bytes = None
+        if fullpath:
+            try:
+                with open(fullpath, "rb") as fh:
+                    image_bytes = fh.read()
+            except OSError as exc:
+                print("worker-comfyui - FIG_MEDIA read fail %s %s" % (fullpath, exc), flush=True)
+        if not image_bytes:
+            image_bytes = get_image_data(
+                filename,
+                image_info.get("subfolder") or "",
+                image_info.get("type") or "output",
+            )
+        if not image_bytes:
+            errors.append("FIG_MEDIA missing %s" % filename)
+            continue
+        output_data.append(
+            {
+                "filename": filename,
+                "type": "base64",
+                "data": base64.b64encode(image_bytes).decode("utf-8"),
+            }
+        )
+        seen.add(filename)
+        print("worker-comfyui - FIG_MEDIA kept %s bytes=%s" % (filename, len(image_bytes)), flush=True)
+'''
+
+FOR_RE = re.compile(
+    r"^([ \t]*)for node_id, node_output in outputs\.items\(\):\s*$",
+    re.M,
+)
+OLD_EXTEND_RE = re.compile(
+    r"[ \t]*if \"gifs\" in node_output:\n"
+    r"[ \t]*node_output\.setdefault\(\"images\", \[\]\)\n"
+    r"[ \t]*node_output\[\"images\"\]\.extend\(node_output\[\"gifs\"\]\)\n"
+)
+
+
+def inject_collect_fn(text: str) -> str:
+    """在文件顶部加上逐个收集 gifs 的函数。"""
+    if "def _fig_collect_gifs(" in text:
         return text
-    match = IMAGES_RE.search(text)
+    return COLLECT_FN + "\n" + text
+
+
+def patch_text(text: str) -> str | None:
+    """在遍历输出节点的循环里调用收集函数。对不上官方写法时返回 None。"""
+    text = OLD_EXTEND_RE.sub("", text)
+    if "_fig_collect_gifs(node_id, node_output, output_data, errors)" in text:
+        return text
+    match = FOR_RE.search(text)
     if not match:
         return None
-    indent = match.group(1)
-    insert = (
-        f'{indent}if "gifs" in node_output:\n'
-        f'{indent}    node_output.setdefault("images", [])\n'
-        f'{indent}    node_output["images"].extend(node_output["gifs"])\n'
-        f"{match.group(0)}"
-    )
-    return text[: match.start()] + insert + text[match.end() :]
+    indent = match.group(1) + "    "
+    call = f"{indent}_fig_collect_gifs(node_id, node_output, output_data, errors)\n"
+    return text[: match.end()] + "\n" + call + text[match.end() :]
 
 
 def main() -> None:
@@ -173,9 +237,15 @@ def main() -> None:
         new_text = inject_volume_links(text)
         new_text = inject_handler_wrap(new_text)
         new_text = inject_details(new_text)
+        new_text = inject_collect_fn(new_text)
         gifs_text = patch_text(new_text)
-        if gifs_text is not None:
-            new_text = gifs_text
+        if gifs_text is None:
+            print(f"FAIL: gifs collect point not found in {path}")
+            continue
+        new_text = gifs_text
+        if "_fig_collect_gifs(node_id, node_output, output_data, errors)" not in new_text:
+            print(f"FAIL: gifs collect call missing in {path}")
+            continue
         if new_text == text:
             print(f"already patched {path}")
             patched += 1
@@ -184,7 +254,7 @@ def main() -> None:
         print(f"patched {path}")
         patched += 1
     if patched == 0:
-        print("WARN: handler.py not patched, continue without gifs merge")
+        raise SystemExit("handler gifs patch did not apply")
 
 
 if __name__ == "__main__":
