@@ -46,6 +46,6 @@ jobs:
           file: deploy/runpod-comfy/Dockerfile
           push: true
           # 只推固定版本 tag：浮动 tag 容易让 Endpoint 拉到旧镜像，也多占一次推送
-          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v16
+          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v19
           provenance: false
           sbom: false
