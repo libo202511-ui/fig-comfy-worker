@@ -103,9 +103,9 @@ RUN rm -rf /comfyui/models/liveportrait /comfyui/models/insightface \
  && ln -sfn /runpod-volume/models/liveportrait /comfyui/models/liveportrait \
  && ln -sfn /runpod-volume/models/insightface /comfyui/models/insightface
 
-# 官方 handler 只回 images，VHS 视频在 gifs 键会被丢掉；对不上也不让构建失败
+# 官方 handler 只回 images。VHS 每个节点的成片在 gifs，漏打补丁会只剩最后一段 listen
 COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
-RUN python3 /tmp/patch_handler_gifs.py || echo "WARN: gifs patch skipped"
+RUN python3 /tmp/patch_handler_gifs.py
 
 # FaceShaper 的 insightface 走 onnx，onnx 按 protobuf 6.31.1 生成；
 # 上面那轮节点 requirements 会把运行时压到 5.29.6，protobuf 要求运行时不低于生成版本。
