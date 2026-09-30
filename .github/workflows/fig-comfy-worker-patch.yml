@@ -1,4 +1,4 @@
-# 增量构建：以 v18 为底，推出 v19。标签写死，避免表单仍填 18。
+# 增量构建：以 v19 为底，推出 v20。标签写死，避免表单沿用旧值。
 # 需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
 name: fig-comfy-worker-patch
 
@@ -79,8 +79,8 @@ jobs:
           file: deploy/runpod-comfy/Dockerfile.patch
           push: true
           build-args: |
-            BASE_TAG=5.10.0-gguf-v18
+            BASE_TAG=5.10.0-gguf-v19
             PATCH_MARK=FIG_WAN_PATCH=v17
-          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v19
+          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v20
           provenance: false
           sbom: false
