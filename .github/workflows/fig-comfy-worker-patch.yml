@@ -1,31 +1,20 @@
-# 增量构建 fig Comfy Worker：基于 Docker Hub 已有的完整镜像只叠补丁层，十几分钟出一版
-# Dockerfile 在流程里现生成，只需维护这一个文件；需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
+# 增量构建：以 v18 为底，推出 v19。标签写死，避免表单仍填 18。
+# 需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
 name: fig-comfy-worker-patch
 
 on:
   workflow_dispatch:
-    inputs:
-      base_tag:
-        description: 基础镜像 tag（Docker Hub 上已有的完整镜像）
-        default: 5.10.0-gguf-v15
-      out_tag:
-        description: 产出镜像 tag（填到 RunPod Endpoint 的就是它）
-        default: 5.10.0-gguf-v18
-      patch_mark:
-        description: 补丁标记（对不上就让构建失败，避免推出旧补丁）
-        default: FIG_WAN_PATCH=v17
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 基础镜像 23G，runner 默认盘放不下，必须把空闲盘挂到 Docker 数据目录
       - name: 把空闲盘挂到 Docker
         uses: easimon/maximize-build-space@v10
         with:
-          root-reserve-mb: 8192 # 根盘只留 checkout 和 apt 用量，其余全给 Docker
+          root-reserve-mb: 8192
           temp-reserve-mb: 100
-          swap-size-mb: 8192 # 拉取解包阶段内存吃紧，swap 给足避免 runner 掉线
+          swap-size-mb: 8192
           remove-dotnet: true
           remove-android: true
           remove-haskell: true
@@ -40,17 +29,17 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # 只换 fig 自己的节点补丁层；base 里已把 /start.sh 包过一层，这里只刷新脚本本身
       - name: 生成增量 Dockerfile
         run: |
           cd deploy/runpod-comfy
           cat > Dockerfile.patch <<'EOF'
           ARG BASE_TAG
           FROM liyouchang111/fig-comfy-worker:${BASE_TAG}
+          COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
+          RUN python3 /tmp/patch_handler_gifs.py
           ARG PATCH_MARK
           COPY zzz_fig_wan_patch /comfyui/custom_nodes/zzz_fig_wan_patch
           COPY fig_boot_patch.py /fig_boot_patch.py
-          # 逐项校验并各自报错，别用 && 串成一句看不出是哪步挂的
           RUN ZZZ=/comfyui/custom_nodes/zzz_fig_wan_patch/__init__.py; \
            rm -rf /comfyui/custom_nodes/zzz_fig_wan_patch/__pycache__; \
            if [ ! -f "$ZZZ" ]; then echo "FAIL 补丁文件没进镜像"; exit 1; fi; \
@@ -60,8 +49,6 @@ jobs:
              echo "FAIL 标记不符，GitHub 上那份补丁不是这个版本"; exit 1; fi; \
            if ! python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)" "$ZZZ"; then \
              echo "FAIL 补丁文件语法错误，多半被网页编辑器折断了"; exit 1; fi
-          # FaceShaper 的 insightface 走 onnx，onnx 按 protobuf 6.31.1 生成；
-          # 各节点 requirements 会把运行时压到 5.29.6，protobuf 要求运行时不低于生成版本
           RUN pip install --no-cache-dir "protobuf>=6.31.1" \
            && python3 -c "import google.protobuf as p; print('protobuf', p.__version__)" \
            && python3 -c "import onnx; print('onnx', onnx.__version__)" \
@@ -69,7 +56,6 @@ jobs:
            && python3 -c "import insightface as i; print('insightface', i.__version__)" \
            && (python3 -c "import mediapipe as m; print('mediapipe', m.__version__)" \
                || echo "mediapipe 不可用，若有节点依赖它需回看 protobuf 版本")
-          # base 里若还没包过启动脚本，这里补上；已包过就不动，避免套成死循环
           RUN if [ ! -f /start.orig.sh ] && [ -f /start.sh ]; then \
              cp /start.sh /start.orig.sh \
              && printf '%s\n' '#!/bin/bash' 'python3 /fig_boot_patch.py || true' \
@@ -80,7 +66,6 @@ jobs:
           EOF
           cat Dockerfile.patch
 
-      # 默认 docker-container 驱动：新层直接推 registry，base 的层仓库里已有会自动跳过
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -94,8 +79,8 @@ jobs:
           file: deploy/runpod-comfy/Dockerfile.patch
           push: true
           build-args: |
-            BASE_TAG=${{ inputs.base_tag }}
-            PATCH_MARK=${{ inputs.patch_mark }}
-          tags: liyouchang111/fig-comfy-worker:${{ inputs.out_tag }}
+            BASE_TAG=5.10.0-gguf-v18
+            PATCH_MARK=FIG_WAN_PATCH=v17
+          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v19
           provenance: false
           sbom: false
