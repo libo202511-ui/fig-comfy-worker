@@ -184,10 +184,10 @@ FOR_RE = re.compile(
     r"^([ \t]*)for node_id, node_output in outputs\.items\(\):\s*$",
     re.M,
 )
-OLD_EXTEND_RE = re.compile(
-    r"[ \t]*if \"gifs\" in node_output:\n"
-    r"[ \t]*node_output\.setdefault\(\"images\", \[\]\)\n"
-    r"[ \t]*node_output\[\"images\"\]\.extend\(node_output\[\"gifs\"\]\)\n"
+# 函数定义那一行也含这段字，不能用普通 in 判断，否则会误当成已经挂上调用
+CALL_RE = re.compile(
+    r"^[ \t]+_fig_collect_gifs\(node_id, node_output, output_data, errors\)\s*$",
+    re.M,
 )
 
 
@@ -200,8 +200,7 @@ def inject_collect_fn(text: str) -> str:
 
 def patch_text(text: str) -> str | None:
     """在遍历输出节点的循环里调用收集函数。对不上官方写法时返回 None。"""
-    text = OLD_EXTEND_RE.sub("", text)
-    if "_fig_collect_gifs(node_id, node_output, output_data, errors)" in text:
+    if CALL_RE.search(text):
         return text
     match = FOR_RE.search(text)
     if not match:
@@ -234,7 +233,7 @@ def main() -> None:
             print(f"FAIL: gifs collect point not found in {path}")
             continue
         new_text = gifs_text
-        if "_fig_collect_gifs(node_id, node_output, output_data, errors)" not in new_text:
+        if not CALL_RE.search(new_text):
             print(f"FAIL: gifs collect call missing in {path}")
             continue
         if new_text == text:
