@@ -1,4 +1,4 @@
-# 增量构建：以 v19 为底，推出 v20。标签写死，避免表单沿用旧值。
+# 增量构建：以 v20 为底，补 talk/idle 固定素材，推出 v21。标签写死，避免表单沿用旧值。
 # 需仓库 Secrets：DOCKERHUB_USERNAME、DOCKERHUB_TOKEN
 name: fig-comfy-worker-patch
 
@@ -35,6 +35,11 @@ jobs:
           cat > Dockerfile.patch <<'EOF'
           ARG BASE_TAG
           FROM liyouchang111/fig-comfy-worker:${BASE_TAG}
+          COPY talk_ref_04.mp4 /comfyui/input/talk_ref_04.mp4
+          COPY ComfyUI_temp_kqhut_00001_.png /comfyui/input/ComfyUI_temp_kqhut_00001_.png
+          RUN ls -l /comfyui/input/talk_ref_04.mp4 /comfyui/input/ComfyUI_temp_kqhut_00001_.png \
+           && test -s /comfyui/input/talk_ref_04.mp4 \
+           && test -s /comfyui/input/ComfyUI_temp_kqhut_00001_.png
           COPY patch_handler_gifs.py /tmp/patch_handler_gifs.py
           RUN python3 /tmp/patch_handler_gifs.py
           ARG PATCH_MARK
@@ -79,8 +84,8 @@ jobs:
           file: deploy/runpod-comfy/Dockerfile.patch
           push: true
           build-args: |
-            BASE_TAG=5.10.0-gguf-v19
+            BASE_TAG=5.10.0-gguf-v20
             PATCH_MARK=FIG_WAN_PATCH=v17
-          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v20
+          tags: liyouchang111/fig-comfy-worker:5.10.0-gguf-v21
           provenance: false
           sbom: false
